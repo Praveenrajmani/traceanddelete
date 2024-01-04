@@ -93,7 +93,7 @@ func main() {
 		if traceInfo.Trace.HTTP == nil || traceInfo.Trace.HTTP.RespInfo.StatusCode != 405 {
 			continue
 		}
-		if traceInfo.Trace.HTTP.RespInfo.Headers.Get("x-amz-delete-marker") != "true" {
+		if values, ok := traceInfo.Trace.HTTP.RespInfo.Headers["x-amz-delete-marker"]; !ok || len(values) == 0 || values[0] != "true" {
 			continue
 		}
 		if !strings.HasSuffix(traceInfo.Trace.Path, "/") {
