@@ -17,16 +17,20 @@ import (
 )
 
 var (
-	endpoint, accessKey, secretKey string
-	insecure, dryRun               bool
-	objectsDeleted                 int64
-	apiPath                        string
+	endpoint, accessKey, secretKey                   string
+	remoteEndpoint, remoteAccessKey, remoteSecretKey string
+	insecure, dryRun                                 bool
+	objectsDeleted                                   int64
+	apiPath                                          string
 )
 
 func main() {
 	flag.StringVar(&endpoint, "endpoint", "", "S3 endpoint URL")
 	flag.StringVar(&accessKey, "access-key", "", "S3 Access Key")
 	flag.StringVar(&secretKey, "secret-key", "", "S3 Secret Key")
+	flag.StringVar(&remoteEndpoint, "remote-endpoint", "", "Remote site endpoint URL")
+	flag.StringVar(&remoteAccessKey, "remote-access-key", "", "Remote site access Key")
+	flag.StringVar(&remoteSecretKey, "remote-secret-key", "", "Remote secret Key")
 	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification")
 	flag.BoolVar(&dryRun, "dry-run", false, "Enable dry run mode")
 	flag.StringVar(&apiPath, "path", "", "Filter only matching path")
@@ -35,16 +39,31 @@ func main() {
 	if endpoint == "" {
 		log.Fatalln("endpoint is not provided")
 	}
-
 	if accessKey == "" {
 		log.Fatalln("access key is not provided")
 	}
-
 	if secretKey == "" {
 		log.Fatalln("secret key is not provided")
 	}
+	if remoteEndpoint == "" {
+		log.Fatalln("remote endpoint is not provided")
+	}
+	if remoteAccessKey == "" {
+		log.Fatalln("remote access key is not provided")
+	}
+	if remoteSecretKey == "" {
+		log.Fatalln("remote secret key is not provided")
+	}
 
-	s3Client, adminClient := getS3Clients(endpoint, accessKey, secretKey, insecure)
+	s3Client, remoteS3Client, adminClient := getClients(clientArgs{
+		endpoint:        endpoint,
+		accessKey:       accessKey,
+		secretKey:       secretKey,
+		remoteEndpoint:  remoteEndpoint,
+		remoteAccessKey: remoteAccessKey,
+		remoteSecretKey: remoteSecretKey,
+		insecure:        insecure,
+	})
 	ctx := context.Background()
 
 	if !dryRun {
@@ -74,6 +93,9 @@ func main() {
 		if traceInfo.Trace.HTTP == nil || traceInfo.Trace.HTTP.RespInfo.StatusCode != 405 {
 			continue
 		}
+		if traceInfo.Trace.HTTP.RespInfo.Headers.Get("x-amz-delete-marker") != "true" {
+			continue
+		}
 		if !strings.HasSuffix(traceInfo.Trace.Path, "/") {
 			continue
 		}
@@ -96,7 +118,13 @@ func main() {
 			ForceDelete:      true,
 			GovernanceBypass: true,
 		}); err != nil {
-			log.Printf("unable to delete the object: %v; %v\n", objectKey, err)
+			log.Printf("unable to delete the object from source: %v; %v\n", objectKey, err)
+		}
+		if err := remoteS3Client.RemoveObject(ctx, bucket, objectKey, minio.RemoveObjectOptions{
+			ForceDelete:      true,
+			GovernanceBypass: true,
+		}); err != nil {
+			log.Printf("unable to delete the object from remote: %v; %v\n", objectKey, err)
 		}
 		objectsDeleted++
 	}
@@ -105,12 +133,22 @@ func main() {
 	}
 }
 
-func getS3Clients(endpoint string, accessKey string, secretKey string, insecure bool) (*minio.Client, *madmin.AdminClient) {
+type clientArgs struct {
+	endpoint, accessKey, secretKey, remoteEndpoint, remoteAccessKey, remoteSecretKey string
+	insecure                                                                         bool
+}
+
+func getClients(args clientArgs) (*minio.Client, *minio.Client, *madmin.AdminClient) {
+	return gets3Client(args.endpoint, args.accessKey, args.secretKey),
+		gets3Client(args.remoteEndpoint, args.remoteAccessKey, args.remoteSecretKey),
+		gets3AdminClient(args.endpoint, args.accessKey, args.secretKey)
+}
+
+func gets3Client(endpoint, accessKey, secretKey string) *minio.Client {
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		log.Fatalln(err)
 	}
-
 	secure := strings.EqualFold(u.Scheme, "https")
 	transport, err := minio.DefaultTransport(secure)
 	if err != nil {
@@ -119,7 +157,6 @@ func getS3Clients(endpoint string, accessKey string, secretKey string, insecure 
 	if transport.TLSClientConfig != nil {
 		transport.TLSClientConfig.InsecureSkipVerify = insecure
 	}
-
 	s3Client, err := minio.New(u.Host, &minio.Options{
 		Creds:     credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure:    secure,
@@ -129,15 +166,29 @@ func getS3Clients(endpoint string, accessKey string, secretKey string, insecure 
 		log.Fatalln(err)
 	}
 	s3Client.SetAppInfo("traceanddelete", "v1")
+	return s3Client
+}
 
+func gets3AdminClient(endpoint, accessKey, secretKey string) *madmin.AdminClient {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	secure := strings.EqualFold(u.Scheme, "https")
+	transport, err := minio.DefaultTransport(secure)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	if transport.TLSClientConfig != nil {
+		transport.TLSClientConfig.InsecureSkipVerify = insecure
+	}
 	madmClnt, err := madmin.New(u.Host, accessKey, secretKey, secure)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	madmClnt.SetCustomTransport(transport)
 	madmClnt.SetAppInfo("traceanddelete", "v1")
-
-	return s3Client, madmClnt
+	return madmClnt
 }
 
 func logProgress(ctx context.Context) {
