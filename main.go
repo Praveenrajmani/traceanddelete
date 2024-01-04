@@ -54,6 +54,7 @@ func main() {
 	if remoteSecretKey == "" {
 		log.Fatalln("remote secret key is not provided")
 	}
+	uniquePathMap := make(map[string]struct{})
 
 	s3Client, remoteS3Client, adminClient := getClients(clientArgs{
 		endpoint:        endpoint,
@@ -102,6 +103,10 @@ func main() {
 		if apiPath != "" && !wildcard.Match(path.Join("/", apiPath), traceInfo.Trace.Path) {
 			continue
 		}
+		if _, ok := uniquePathMap[traceInfo.Trace.Path]; ok {
+			continue
+		}
+		uniquePathMap[traceInfo.Trace.Path] = struct{}{}
 		path := strings.TrimPrefix(traceInfo.Trace.Path, "/")
 		split := strings.Split(path, "/")
 		if len(split) <= 2 {
