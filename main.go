@@ -80,7 +80,8 @@ func main() {
 		if apiPath != "" && !wildcard.Match(path.Join("/", apiPath), traceInfo.Trace.Path) {
 			continue
 		}
-		split := strings.Split(traceInfo.Trace.Path, "/")
+		path := strings.TrimPrefix(traceInfo.Trace.Path, "/")
+		split := strings.Split(path, "/")
 		if len(split) <= 2 {
 			continue
 		}
@@ -88,7 +89,7 @@ func main() {
 		objectKey := strings.TrimSuffix(strings.Join(split[1:], "/"), "/")
 		objectKey = objectKey + "__XLDIR__"
 		if dryRun {
-			fmt.Println(bucket + "/" + objectKey)
+			fmt.Println("/" + bucket + "/" + objectKey)
 			continue
 		}
 		if err := s3Client.RemoveObject(ctx, bucket, objectKey, minio.RemoveObjectOptions{
@@ -97,9 +98,9 @@ func main() {
 		}); err != nil {
 			log.Printf("unable to delete the object: %v; %v\n", objectKey, err)
 		}
+		objectsDeleted++
 	}
 	if !dryRun {
-		objectsDeleted++
 		fmt.Printf("\nDeleted %v objects...", objectsDeleted)
 	}
 }
@@ -129,7 +130,7 @@ func getS3Clients(endpoint string, accessKey string, secretKey string, insecure 
 	}
 	s3Client.SetAppInfo("traceanddelete", "v1")
 
-	madmClnt, err := madmin.New(endpoint, accessKey, secretKey, secure)
+	madmClnt, err := madmin.New(u.Host, accessKey, secretKey, secure)
 	if err != nil {
 		log.Fatalln(err)
 	}
