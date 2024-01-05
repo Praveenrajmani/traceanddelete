@@ -93,7 +93,7 @@ func main() {
 		}()
 	}
 
-	deleteQueueCh := make(chan deleteArgs, workerCount)
+	deleteQueueCh := make(chan deleteArgs, workerCount*2)
 
 	wk, err := workers.New(workerCount)
 	if err != nil {
