@@ -17,6 +17,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.2.6 // indirect
 	github.com/lufia/plan9stats v0.0.0-20230110061619-bbe2e5e100de // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
+	github.com/minio/pkg v1.7.5 // indirect
 	github.com/minio/sha256-simd v1.0.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect

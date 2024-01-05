@@ -18,6 +18,8 @@ Usage of ./traceanddelete:
     	Remote secret Key
   -secret-key string
     	S3 Secret Key
+  -workers int
+	    Add workers to process the DELETEs (default 5)
 ```
 
 Example :-

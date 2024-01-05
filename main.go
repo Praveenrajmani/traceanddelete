@@ -8,21 +8,29 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	madmin "github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/pkg/v2/wildcard"
+	"github.com/minio/pkg/workers"
 )
 
 var (
 	endpoint, accessKey, secretKey                   string
 	remoteEndpoint, remoteAccessKey, remoteSecretKey string
 	insecure, dryRun                                 bool
-	objectsDeleted                                   int64
+	objectsDeleted                                   atomic.Int64
 	apiPath                                          string
+	workerCount                                      int
 )
+
+type deleteArgs struct {
+	bucket string
+	object string
+}
 
 func main() {
 	flag.StringVar(&endpoint, "endpoint", "", "S3 endpoint URL")
@@ -34,6 +42,7 @@ func main() {
 	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification")
 	flag.BoolVar(&dryRun, "dry-run", false, "Enable dry run mode")
 	flag.StringVar(&apiPath, "path", "", "Filter only matching path")
+	flag.IntVar(&workerCount, "workers", 5, "Add workers to process the DELETEs")
 	flag.Parse()
 
 	if endpoint == "" {
@@ -54,6 +63,7 @@ func main() {
 	if remoteSecretKey == "" {
 		log.Fatalln("remote secret key is not provided")
 	}
+
 	uniquePathMap := make(map[string]struct{})
 
 	s3Client, remoteS3Client, adminClient := getClients(clientArgs{
@@ -69,7 +79,7 @@ func main() {
 
 	if !dryRun {
 		go func() {
-			ticker := time.NewTicker(10 * time.Second)
+			ticker := time.NewTicker(30 * time.Second)
 			defer ticker.Stop()
 
 			for {
@@ -77,7 +87,42 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					fmt.Printf("\nDeleted %v objects...", objectsDeleted)
+					fmt.Printf("\n[PROGRESS] Deleted %v objects...", objectsDeleted.Load())
+				}
+			}
+		}()
+	}
+
+	deleteQueueCh := make(chan deleteArgs, workerCount)
+
+	wk, err := workers.New(workerCount)
+	if err != nil {
+		log.Fatalf("unable to create workers; %v", err)
+	}
+
+	for i := 0; i < workerCount; i++ {
+		wk.Take()
+		go func() {
+			defer wk.Give()
+			for {
+				select {
+				case args := <-deleteQueueCh:
+					fmt.Printf("\nDeleting /%s/%s", args.bucket, args.object)
+					if err := s3Client.RemoveObject(ctx, args.bucket, args.object, minio.RemoveObjectOptions{
+						ForceDelete:      true,
+						GovernanceBypass: true,
+					}); err != nil {
+						log.Printf("unable to delete the object from source: %v; %v\n", args.object, err)
+					}
+					if err := remoteS3Client.RemoveObject(ctx, args.bucket, args.object, minio.RemoveObjectOptions{
+						ForceDelete:      true,
+						GovernanceBypass: true,
+					}); err != nil {
+						log.Printf("unable to delete the object from remote: %v; %v\n", args.object, err)
+					}
+					objectsDeleted.Add(1)
+				case <-ctx.Done():
+					return
 				}
 			}
 		}()
@@ -119,22 +164,23 @@ func main() {
 			fmt.Println("/" + bucket + "/" + objectKey)
 			continue
 		}
-		if err := s3Client.RemoveObject(ctx, bucket, objectKey, minio.RemoveObjectOptions{
-			ForceDelete:      true,
-			GovernanceBypass: true,
-		}); err != nil {
-			log.Printf("unable to delete the object from source: %v; %v\n", objectKey, err)
+
+		select {
+		case deleteQueueCh <- deleteArgs{
+			bucket: bucket,
+			object: objectKey,
+		}:
+		case <-ctx.Done():
+			fmt.Println("context cancelled; %v", ctx.Err())
+			break
 		}
-		if err := remoteS3Client.RemoveObject(ctx, bucket, objectKey, minio.RemoveObjectOptions{
-			ForceDelete:      true,
-			GovernanceBypass: true,
-		}); err != nil {
-			log.Printf("unable to delete the object from remote: %v; %v\n", objectKey, err)
-		}
-		objectsDeleted++
 	}
+
+	// wait for the workers
+	wk.Wait()
+
 	if !dryRun {
-		fmt.Printf("\nDeleted %v objects...", objectsDeleted)
+		fmt.Printf("\n[PROGRESS] Deleted %v objects...", objectsDeleted.Load())
 	}
 }
 
@@ -170,7 +216,7 @@ func gets3Client(endpoint, accessKey, secretKey string) *minio.Client {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	s3Client.SetAppInfo("traceanddelete", "v1")
+	s3Client.SetAppInfo("traceanddelete", "v1.1")
 	return s3Client
 }
 
@@ -192,20 +238,6 @@ func gets3AdminClient(endpoint, accessKey, secretKey string) *madmin.AdminClient
 		log.Fatalln(err)
 	}
 	madmClnt.SetCustomTransport(transport)
-	madmClnt.SetAppInfo("traceanddelete", "v1")
+	madmClnt.SetAppInfo("traceanddelete", "v1.1")
 	return madmClnt
-}
-
-func logProgress(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			fmt.Printf("\nDeleted %v objects...", objectsDeleted)
-		}
-	}
 }
