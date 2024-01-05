@@ -152,7 +152,12 @@ func main() {
 			continue
 		}
 		uniquePathMap[traceInfo.Trace.Path] = struct{}{}
-		path := strings.TrimPrefix(traceInfo.Trace.Path, "/")
+		path, err := url.PathUnescape(traceInfo.Trace.Path)
+		if err != nil {
+			fmt.Printf("\n[ERROR] unable to escape the path %v; %v", traceInfo.Trace.Path, err)
+			continue
+		}
+		path = strings.TrimPrefix(path, "/")
 		split := strings.Split(path, "/")
 		if len(split) <= 2 {
 			continue
