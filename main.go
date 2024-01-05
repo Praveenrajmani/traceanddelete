@@ -25,6 +25,8 @@ var (
 	objectsDeleted                                   atomic.Int64
 	apiPath                                          string
 	workerCount                                      int
+	includeObjects                                   bool
+	olderThan                                        time.Duration
 )
 
 type deleteArgs struct {
@@ -43,6 +45,8 @@ func main() {
 	flag.BoolVar(&dryRun, "dry-run", false, "Enable dry run mode")
 	flag.StringVar(&apiPath, "path", "", "Filter only matching path")
 	flag.IntVar(&workerCount, "workers", 5, "Add workers to process the DELETEs")
+	flag.BoolVar(&includeObjects, "include-objects", false, "Look for objects in the trace")
+	flag.DurationVar(&olderThan, "older-than", 0, "To delete objects older than duration; example: 1h, 1d")
 	flag.Parse()
 
 	if endpoint == "" {
@@ -142,7 +146,8 @@ func main() {
 		if values, ok := traceInfo.Trace.HTTP.RespInfo.Headers["x-amz-delete-marker"]; !ok || len(values) == 0 || values[0] != "true" {
 			continue
 		}
-		if !strings.HasSuffix(traceInfo.Trace.Path, "/") {
+		isDirMarker := strings.HasSuffix(traceInfo.Trace.Path, "/")
+		if !includeObjects && !isDirMarker {
 			continue
 		}
 		if apiPath != "" && !wildcard.Match(path.Join("/", apiPath), traceInfo.Trace.Path) {
@@ -163,8 +168,21 @@ func main() {
 			continue
 		}
 		bucket := split[0]
+
 		objectKey := strings.TrimSuffix(strings.Join(split[1:], "/"), "/")
-		objectKey = objectKey + "__XLDIR__"
+		if !includeObjects {
+			objectKey = objectKey + "__XLDIR__"
+		}
+
+		if !isDirMarker && includeObjects {
+			if !validateDeleteMarker(ctx, s3Client, bucket, objectKey, olderThan) {
+				continue
+			}
+			if !validateDeleteMarker(ctx, remoteS3Client, bucket, objectKey, olderThan) {
+				continue
+			}
+		}
+
 		if dryRun {
 			fmt.Println("/" + bucket + "/" + objectKey)
 			continue
@@ -221,7 +239,7 @@ func gets3Client(endpoint, accessKey, secretKey string) *minio.Client {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	s3Client.SetAppInfo("traceanddelete", "v1.1")
+	s3Client.SetAppInfo("traceanddelete", "v2.0")
 	return s3Client
 }
 
@@ -243,6 +261,35 @@ func gets3AdminClient(endpoint, accessKey, secretKey string) *madmin.AdminClient
 		log.Fatalln(err)
 	}
 	madmClnt.SetCustomTransport(transport)
-	madmClnt.SetAppInfo("traceanddelete", "v1.1")
+	madmClnt.SetAppInfo("traceanddelete", "v2.0")
 	return madmClnt
+}
+
+func validateDeleteMarker(ctx context.Context, client *minio.Client, bucket, object string, longerThan time.Duration) bool {
+	soi, err := client.StatObject(ctx, bucket, object, minio.StatObjectOptions{
+		Internal: minio.AdvancedGetOptions{ReplicationDeleteMarker: true},
+	})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code != "NoSuchKey" {
+			return false
+		}
+		return true
+	}
+	// ToDo: This needs to be fixed..
+	// The below code is not reachable, the Stat() will always return "NoSuchKey"
+	// for objects with latest version as DEL marker..
+	// We need to LIST() instead which is costlier...
+	if !soi.IsDeleteMarker {
+		return false
+	}
+	if !soi.IsLatest {
+		return false
+	}
+	if longerThan != 0 {
+		currentTime := time.Now().UTC()
+		if soi.LastModified.After(currentTime.Add(-longerThan)) {
+			return false
+		}
+	}
+	return true
 }
