@@ -25,7 +25,7 @@ var (
 	objectsDeleted                                   atomic.Int64
 	apiPath                                          string
 	workerCount                                      int
-	includeObjects                                   bool
+	onlyObjects                                      bool
 	olderThan                                        time.Duration
 	printWithPrefix                                  string
 )
@@ -46,7 +46,7 @@ func main() {
 	flag.BoolVar(&dryRun, "dry-run", false, "Enable dry run mode")
 	flag.StringVar(&apiPath, "path", "", "Filter only matching path")
 	flag.IntVar(&workerCount, "workers", 5, "Add workers to process the DELETEs")
-	flag.BoolVar(&includeObjects, "include-objects", false, "Look for objects in the trace")
+	flag.BoolVar(&onlyObjects, "objects", false, "Look for objects only in the trace")
 	flag.DurationVar(&olderThan, "older-than", 0, "To delete objects older than duration; example: 1h, 1d")
 	flag.StringVar(&printWithPrefix, "print-with-prefix", "", "if set, prints the entries with prefix; to be used with dry-run only")
 	flag.Parse()
@@ -149,9 +149,14 @@ func main() {
 			continue
 		}
 		isDirMarker := strings.HasSuffix(traceInfo.Trace.Path, "/")
-		if !includeObjects && !isDirMarker {
+
+		switch {
+		case isDirMarker && !onlyObjects:
+		case !isDirMarker && onlyObjects:
+		default:
 			continue
 		}
+
 		if apiPath != "" && !wildcard.Match(path.Join("/", apiPath), traceInfo.Trace.Path) {
 			continue
 		}
@@ -172,11 +177,11 @@ func main() {
 		bucket := split[0]
 
 		objectKey := strings.TrimSuffix(strings.Join(split[1:], "/"), "/")
-		if !includeObjects {
+		if isDirMarker {
 			objectKey = objectKey + "__XLDIR__"
 		}
 
-		if !isDirMarker && includeObjects {
+		if !isDirMarker {
 			if !validateDeleteMarker(ctx, s3Client, bucket, objectKey, olderThan) {
 				continue
 			}
