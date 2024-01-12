@@ -27,6 +27,7 @@ var (
 	workerCount                                      int
 	includeObjects                                   bool
 	olderThan                                        time.Duration
+	printWithPrefix                                  string
 )
 
 type deleteArgs struct {
@@ -47,6 +48,7 @@ func main() {
 	flag.IntVar(&workerCount, "workers", 5, "Add workers to process the DELETEs")
 	flag.BoolVar(&includeObjects, "include-objects", false, "Look for objects in the trace")
 	flag.DurationVar(&olderThan, "older-than", 0, "To delete objects older than duration; example: 1h, 1d")
+	flag.StringVar(&printWithPrefix, "print-with-prefix", "", "if set, prints the entries with prefix; to be used with dry-run only")
 	flag.Parse()
 
 	if endpoint == "" {
@@ -184,7 +186,7 @@ func main() {
 		}
 
 		if dryRun {
-			fmt.Println("/" + bucket + "/" + objectKey)
+			fmt.Println(printWithPrefix + "/" + bucket + "/" + objectKey)
 			continue
 		}
 
