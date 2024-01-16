@@ -171,14 +171,19 @@ func main() {
 		}
 		path = strings.TrimPrefix(path, "/")
 		split := strings.Split(path, "/")
-		if len(split) <= 2 {
+		if len(split) < 2 {
 			continue
 		}
+
 		bucket := split[0]
 
 		objectKey := strings.TrimSuffix(strings.Join(split[1:], "/"), "/")
 		if isDirMarker {
 			objectKey = objectKey + "__XLDIR__"
+		}
+
+		if objectKey == "" {
+			continue
 		}
 
 		if !isDirMarker {
