@@ -1,13 +1,11 @@
 ```sh
-Usage of ./traceanddelete_v2:
+Usage of ./traceanddelete_v3:
   -access-key string
     	S3 Access Key
   -dry-run
     	Enable dry run mode
   -endpoint string
     	S3 endpoint URL
-  -include-objects
-    	Look for objects in the trace
   -insecure
     	Disable TLS verification
   -older-than duration
@@ -31,5 +29,5 @@ Usage of ./traceanddelete_v2:
 Example :-
 
 ```sh
-./traceanddelete_v2 --endpoint http://localhost:9000 --access-key minio --secret-key minio123 --remote-endpoint http://localhost:9002 --remote-access-key minio --remote-secret-key minio123 --include-objects
+./traceanddelete_v3 --remote-endpoint http://localhost:9000 --remote-access-key minio --remote-secret-key minio123 --endpoint http://localhost:9002 --access-key minio --secret-key minio123
 ```

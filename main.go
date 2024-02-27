@@ -25,7 +25,6 @@ var (
 	objectsDeleted                                   atomic.Int64
 	apiPath                                          string
 	workerCount                                      int
-	onlyObjects                                      bool
 	olderThan                                        time.Duration
 	printWithPrefix                                  string
 )
@@ -46,7 +45,6 @@ func main() {
 	flag.BoolVar(&dryRun, "dry-run", false, "Enable dry run mode")
 	flag.StringVar(&apiPath, "path", "", "Filter only matching path")
 	flag.IntVar(&workerCount, "workers", 5, "Add workers to process the DELETEs")
-	flag.BoolVar(&onlyObjects, "objects", false, "Look for objects only in the trace")
 	flag.DurationVar(&olderThan, "older-than", 0, "To delete objects older than duration; example: 1h, 1d")
 	flag.StringVar(&printWithPrefix, "print-with-prefix", "", "if set, prints the entries with prefix; to be used with dry-run only")
 	flag.Parse()
@@ -134,6 +132,15 @@ func main() {
 		}()
 	}
 
+	if !dryRun {
+		fmt.Println()
+		fmt.Printf("Configured Endpoint: '%v'\n", endpoint)
+		fmt.Printf("Configured Remote Endpoint: '%v'\n", remoteEndpoint)
+		fmt.Printf("Configured Workers: %v\n", workerCount)
+		fmt.Println()
+		fmt.Println("Listening for HEAD object failures...")
+	}
+
 	traceCh := adminClient.ServiceTrace(ctx, madmin.ServiceTraceOpts{S3: true, OnlyErrors: true})
 	for traceInfo := range traceCh {
 		if traceInfo.Err != nil {
@@ -149,13 +156,6 @@ func main() {
 			continue
 		}
 		isDirMarker := strings.HasSuffix(traceInfo.Trace.Path, "/")
-
-		switch {
-		case isDirMarker && !onlyObjects:
-		case !isDirMarker && onlyObjects:
-		default:
-			continue
-		}
 
 		if apiPath != "" && !wildcard.Match(path.Join("/", apiPath), traceInfo.Trace.Path) {
 			continue
@@ -251,7 +251,7 @@ func gets3Client(endpoint, accessKey, secretKey string) *minio.Client {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	s3Client.SetAppInfo("traceanddelete", "v2.0")
+	s3Client.SetAppInfo("traceanddelete", "v3.0")
 	return s3Client
 }
 
@@ -273,7 +273,7 @@ func gets3AdminClient(endpoint, accessKey, secretKey string) *madmin.AdminClient
 		log.Fatalln(err)
 	}
 	madmClnt.SetCustomTransport(transport)
-	madmClnt.SetAppInfo("traceanddelete", "v2.0")
+	madmClnt.SetAppInfo("traceanddelete", "v3.0")
 	return madmClnt
 }
 
